@@ -5,6 +5,7 @@ Python-Skript zum automatischen Umbenennen von PDF-Dateien anhand von Dokumentnu
 ## Funktionen
 
 - Extrahiert `(Dokument Nr. XXXX)` aus einer Quell-PDF.
+- Übernimmt optionale Buchstaben-Suffixe aus dem Heft (z. B. `4224a`, `4224b`) in den Dateipräfix.
 - Matched Zitate gegen Dateinamen und PDF-Inhalte.
 - Optional OCR-Fallback für gescannte Bild-PDFs (`tesseract` + `pdftoppm`).
 - Optional dauerhaft durchsuchbare PDFs erzeugen (`ocrmypdf`).
@@ -74,6 +75,7 @@ python3 rename_by_dokumentnummer.py --source-pdf ANA-ZAR_1_26_Online.pdf --folde
 - Ohne `--apply` wird nichts umbenannt.
 - Für große Ordner kann OCR länger dauern.
 - Das Skript ist defensiv: bei unklaren Treffern wird nicht automatisch umbenannt.
+- Beispiel: `4224_VG Berlin, ...pdf` wird bei `(Dokument Nr. 4224 b)` zu `4224b_VG Berlin, ...pdf`.
 
 ## Lizenz
 

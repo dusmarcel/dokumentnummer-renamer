@@ -68,8 +68,13 @@ MIN_PYTHON = (3, 10)
 @dataclass
 class DocumentRef:
     doc_number: str
+    doc_suffix: str
     citation: str
     line_no: int
+
+    @property
+    def doc_id(self) -> str:
+        return f"{self.doc_number}{self.doc_suffix}"
 
 
 @dataclass
@@ -413,7 +418,7 @@ def build_candidate_index(
 def extract_document_refs(text: str) -> List[DocumentRef]:
     lines = text.splitlines()
     refs: List[DocumentRef] = []
-    doc_re = re.compile(r"\(Dokument Nr\.\s*(\d{4,5})(?:\s*[a-z])?\)", re.IGNORECASE)
+    doc_re = re.compile(r"\(Dokument Nr\.\s*(\d{4,5})\s*([a-z])?\)", re.IGNORECASE)
     court_hint_re = re.compile(r"\b(VG|OVG|VGH|LG|BVerwG|BVerfG|EuGH|AG)\b", re.IGNORECASE)
     az_hint_re = re.compile(r"\d{1,3}\s*[A-Za-z]{0,4}\s*\d{1,5}\s*[/.-]\s*\d{2}|\d{1,3}\.\d{3,5}")
 
@@ -426,6 +431,7 @@ def extract_document_refs(text: str) -> List[DocumentRef]:
             continue
 
         doc_number = m.group(1)
+        doc_suffix = (m.group(2) or "").lower()
         before = line[: m.start()].strip()
         prev1 = lines[idx - 1].strip() if idx - 1 >= 0 else ""
         prev2 = lines[idx - 2].strip() if idx - 2 >= 0 else ""
@@ -448,7 +454,14 @@ def extract_document_refs(text: str) -> List[DocumentRef]:
 
         citation = max(candidate_chunks, key=quality_score)
         citation = re.sub(r"\s+", " ", citation).strip(" ,;-")
-        refs.append(DocumentRef(doc_number=doc_number, citation=citation, line_no=idx + 1))
+        refs.append(
+            DocumentRef(
+                doc_number=doc_number,
+                doc_suffix=doc_suffix,
+                citation=citation,
+                line_no=idx + 1,
+            )
+        )
 
     return refs
 
@@ -648,15 +661,16 @@ def rename_files(matches: List[MatchResult], separator: str, apply: bool) -> int
 
     for result in matches:
         ref = result.ref
+        doc_id = ref.doc_id
         if len(result.matches) == 0:
             print(
-                f"[FEHLT] Dokument Nr. {ref.doc_number}: keine passende Datei gefunden | '{ref.citation}'"
+                f"[FEHLT] Dokument Nr. {doc_id}: keine passende Datei gefunden | '{ref.citation}'"
             )
             errors += 1
             continue
 
         if len(result.matches) > 1:
-            print(f"[DOPPELT] Dokument Nr. {ref.doc_number}: mehrere Treffer")
+            print(f"[DOPPELT] Dokument Nr. {doc_id}: mehrere Treffer")
             for p in result.matches:
                 print(f"         - {p.name}")
             errors += 1
@@ -664,24 +678,24 @@ def rename_files(matches: List[MatchResult], separator: str, apply: bool) -> int
 
         src = result.matches[0]
         if src in already_assigned:
-            if already_assigned[src] != ref.doc_number:
+            if already_assigned[src] != doc_id:
                 print(
-                    f"[DOPPELT] Datei bereits Dokument Nr. {already_assigned[src]} zugeordnet: {src.name} (neu: {ref.doc_number})"
+                    f"[DOPPELT] Datei bereits Dokument Nr. {already_assigned[src]} zugeordnet: {src.name} (neu: {doc_id})"
                 )
                 errors += 1
                 continue
             print(f"[OK] Bereits derselben Dokumentnummer zugeordnet: {src.name}")
             continue
-        already_assigned[src] = ref.doc_number
+        already_assigned[src] = doc_id
 
-        if src.name.startswith(f"{ref.doc_number}{separator}"):
+        if src.name.startswith(f"{doc_id}{separator}"):
             print(f"[OK] Bereits umbenannt: {src.name}")
             continue
 
-        dst = src.with_name(f"{ref.doc_number}{separator}{src.name}")
+        dst = src.with_name(f"{doc_id}{separator}{src.name}")
         if dst.exists():
             print(
-                f"[KONFLIKT] Ziel existiert bereits für Dokument Nr. {ref.doc_number}: {dst.name}"
+                f"[KONFLIKT] Ziel existiert bereits für Dokument Nr. {doc_id}: {dst.name}"
             )
             errors += 1
             continue
