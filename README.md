@@ -40,6 +40,7 @@ python3 rename_by_dokumentnummer.py --install-deps --with-optional-deps
 
 Hinweise:
 - Unterstützte Paketmanager: `apt-get`, `dnf`, `pacman`, `zypper`, `brew`.
+- Arch Linux: `ocrmypdf` wird bei `--with-optional-deps` über AUR-Helper (`yay` oder `paru`) installiert, falls vorhanden.
 - Je nach System sind `sudo`-Rechte erforderlich.
 
 ## Nutzung

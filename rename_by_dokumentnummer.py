@@ -168,6 +168,13 @@ def detect_package_manager() -> str | None:
     return None
 
 
+def detect_aur_helper() -> str | None:
+    for helper in ("yay", "paru"):
+        if shutil.which(helper):
+            return helper
+    return None
+
+
 def build_install_steps(manager: str, include_optional: bool) -> List[List[str]]:
     needs_elevation = manager in {"apt-get", "dnf", "pacman", "zypper"}
     if needs_elevation and hasattr(os, "geteuid") and os.geteuid() != 0:
@@ -195,8 +202,18 @@ def build_install_steps(manager: str, include_optional: bool) -> List[List[str]]
     if manager == "pacman":
         packages = ["poppler"]
         if include_optional:
-            packages.extend(["tesseract", "ocrmypdf"])
-        return [[*prefix, "pacman", "-S", "--needed", *packages]]
+            packages.append("tesseract")
+        steps = [[*prefix, "pacman", "-S", "--needed", *packages]]
+        if include_optional:
+            aur_helper = detect_aur_helper()
+            if aur_helper:
+                steps.append([aur_helper, "-S", "--needed", "ocrmypdf"])
+            else:
+                print(
+                    "Hinweis: Für Arch Linux liegt 'ocrmypdf' typischerweise im AUR. "
+                    "Bitte installiere einen AUR-Helper wie 'yay' oder 'paru'."
+                )
+        return steps
     if manager == "zypper":
         packages = ["poppler-tools"]
         if include_optional:
