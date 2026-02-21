@@ -49,3 +49,12 @@ python3 rename_by_dokumentnummer.py --source-pdf ANA-ZAR_1_26_Online.pdf --folde
 - Ohne `--apply` wird nichts umbenannt.
 - Für große Ordner kann OCR länger dauern.
 - Das Skript ist defensiv: bei unklaren Treffern wird nicht automatisch umbenannt.
+
+## Lizenz
+
+Dieses Projekt ist dual lizenziert unter:
+
+- MIT (`LICENSE-MIT`)
+- Apache License 2.0 (`LICENSE-APACHE`)
+
+Du kannst die Lizenz wählen, die besser zu deinem Anwendungsfall passt.
