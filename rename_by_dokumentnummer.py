@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -61,6 +62,8 @@ IGNORE_FILE_NAMES = {
     "ana-zar_1_26_online.pdf",
 }
 
+MIN_PYTHON = (3, 10)
+
 
 @dataclass
 class DocumentRef:
@@ -84,6 +87,14 @@ class CandidateDoc:
     norm_content: str
 
 
+@dataclass
+class DependencyStatus:
+    tool: str
+    required: bool
+    found_path: str | None
+    note: str
+
+
 def normalize_text(text: str) -> str:
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
@@ -96,6 +107,148 @@ def normalize_text(text: str) -> str:
 def tokenize(text: str) -> List[str]:
     n = normalize_text(text)
     return n.split() if n else []
+
+
+def check_python_version() -> bool:
+    return sys.version_info >= MIN_PYTHON
+
+
+def collect_dependency_status() -> List[DependencyStatus]:
+    return [
+        DependencyStatus(
+            tool="python3.10+",
+            required=True,
+            found_path=sys.executable if check_python_version() else None,
+            note=f"Version: {sys.version.split()[0]}",
+        ),
+        DependencyStatus(
+            tool="pdftotext",
+            required=True,
+            found_path=shutil.which("pdftotext"),
+            note="Aus poppler-utils/poppler",
+        ),
+        DependencyStatus(
+            tool="pdftoppm",
+            required=False,
+            found_path=shutil.which("pdftoppm"),
+            note="Benötigt für --ocr",
+        ),
+        DependencyStatus(
+            tool="tesseract",
+            required=False,
+            found_path=shutil.which("tesseract"),
+            note="Benötigt für --ocr",
+        ),
+        DependencyStatus(
+            tool="ocrmypdf",
+            required=False,
+            found_path=shutil.which("ocrmypdf"),
+            note="Benötigt für --make-searchable",
+        ),
+    ]
+
+
+def print_dependency_status(statuses: List[DependencyStatus]) -> None:
+    print("Abhängigkeitsprüfung:")
+    for dep in statuses:
+        kind = "PFLICHT" if dep.required else "OPTIONAL"
+        state = "OK" if dep.found_path else "FEHLT"
+        path = dep.found_path if dep.found_path else "-"
+        print(f"- [{state}] {dep.tool:<11} ({kind}) | {dep.note} | {path}")
+
+
+def required_dependencies_ok(statuses: List[DependencyStatus]) -> bool:
+    return all(dep.found_path for dep in statuses if dep.required)
+
+
+def detect_package_manager() -> str | None:
+    for manager in ("apt-get", "dnf", "pacman", "zypper", "brew"):
+        if shutil.which(manager):
+            return manager
+    return None
+
+
+def build_install_steps(manager: str, include_optional: bool) -> List[List[str]]:
+    needs_elevation = manager in {"apt-get", "dnf", "pacman", "zypper"}
+    if needs_elevation and hasattr(os, "geteuid") and os.geteuid() != 0:
+        if shutil.which("sudo") is None:
+            print("Hinweis: 'sudo' nicht gefunden. Installation könnte wegen fehlender Rechte fehlschlagen.")
+            prefix: List[str] = []
+        else:
+            prefix = ["sudo"]
+    else:
+        prefix = []
+
+    if manager == "apt-get":
+        packages = ["poppler-utils"]
+        if include_optional:
+            packages.extend(["tesseract-ocr", "ocrmypdf"])
+        return [
+            [*prefix, "apt-get", "update"],
+            [*prefix, "apt-get", "install", "-y", *packages],
+        ]
+    if manager == "dnf":
+        packages = ["poppler-utils"]
+        if include_optional:
+            packages.extend(["tesseract", "ocrmypdf"])
+        return [[*prefix, "dnf", "install", "-y", *packages]]
+    if manager == "pacman":
+        packages = ["poppler"]
+        if include_optional:
+            packages.extend(["tesseract", "ocrmypdf"])
+        return [[*prefix, "pacman", "-S", "--needed", *packages]]
+    if manager == "zypper":
+        packages = ["poppler-tools"]
+        if include_optional:
+            packages.extend(["tesseract-ocr", "ocrmypdf"])
+        return [[*prefix, "zypper", "install", "-y", *packages]]
+    if manager == "brew":
+        packages = ["poppler"]
+        if include_optional:
+            packages.extend(["tesseract", "ocrmypdf"])
+        return [["brew", "install", *packages]]
+    return []
+
+
+def run_dependency_route(install: bool, include_optional: bool) -> int:
+    statuses = collect_dependency_status()
+    print_dependency_status(statuses)
+    print("---")
+    required_ok = required_dependencies_ok(statuses)
+    if required_ok:
+        print("Pflichtabhängigkeiten: OK")
+    else:
+        print("Pflichtabhängigkeiten: FEHLEN")
+
+    if not install:
+        return 0 if required_ok else 2
+
+    manager = detect_package_manager()
+    if manager is None:
+        print("Kein unterstützter Paketmanager gefunden (apt-get/dnf/pacman/zypper/brew).")
+        print("Bitte installiere manuell: poppler-utils bzw. poppler.")
+        if include_optional:
+            print("Optional zusätzlich: tesseract, ocrmypdf")
+        return 2
+
+    steps = build_install_steps(manager, include_optional)
+    if not steps:
+        print(f"Keine Installationsschritte für Paketmanager '{manager}' verfügbar.")
+        return 2
+
+    print(f"Installationsversuch via {manager}:")
+    for step in steps:
+        print(f"$ {' '.join(step)}")
+        proc = subprocess.run(step, check=False)
+        if proc.returncode != 0:
+            print(f"Fehler bei Installationsschritt (Exit {proc.returncode}).", file=sys.stderr)
+            return proc.returncode
+
+    print("---")
+    print("Erneute Prüfung nach Installation:")
+    post = collect_dependency_status()
+    print_dependency_status(post)
+    return 0 if required_dependencies_ok(post) else 2
 
 
 def run_pdftotext(pdf_path: Path) -> str:
@@ -594,8 +747,29 @@ def main() -> int:
         action="store_true",
         help="Durchsuchbare PDFs neu erzeugen, auch wenn sie bereits vorhanden sind.",
     )
+    parser.add_argument(
+        "--check-deps",
+        action="store_true",
+        help="Prüft Pflicht- und optionale Abhängigkeiten und beendet sich danach.",
+    )
+    parser.add_argument(
+        "--install-deps",
+        action="store_true",
+        help="Versucht fehlende Abhängigkeiten über den Paketmanager zu installieren.",
+    )
+    parser.add_argument(
+        "--with-optional-deps",
+        action="store_true",
+        help="Installiert bei --install-deps auch optionale OCR-Abhängigkeiten.",
+    )
 
     args = parser.parse_args()
+
+    if args.check_deps or args.install_deps:
+        return run_dependency_route(
+            install=args.install_deps,
+            include_optional=args.with_optional_deps,
+        )
 
     folder = Path(args.folder).resolve()
     source_pdf = (folder / args.source_pdf).resolve()

@@ -10,6 +10,10 @@ This repository is intentionally small and script-centric. Keep new logic in foc
 ## Build, Test, and Development Commands
 - `python3 rename_by_dokumentnummer.py --source-pdf ANA-ZAR_1_26_Online.pdf --folder .`
   - Dry-run (default): prints planned renames without changing files.
+- `python3 rename_by_dokumentnummer.py --check-deps`
+  - Checks required/optional dependencies and exits.
+- `python3 rename_by_dokumentnummer.py --install-deps --with-optional-deps`
+  - Installs required plus optional OCR dependencies (if supported package manager is found).
 - `python3 rename_by_dokumentnummer.py --source-pdf ANA-ZAR_1_26_Online.pdf --folder . --apply`
   - Applies renames.
 - `python3 rename_by_dokumentnummer.py --source-pdf ANA-ZAR_1_26_Online.pdf --folder . --ocr`

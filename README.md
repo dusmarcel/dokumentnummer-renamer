@@ -15,8 +15,32 @@ Python-Skript zum automatischen Umbenennen von PDF-Dateien anhand von Dokumentnu
 - Python 3.10+
 - `pdftotext` (aus `poppler-utils`)
 - Optional:
-  - `tesseract` für OCR-Fallback
+  - `tesseract` + `pdftoppm` für OCR-Fallback
   - `ocrmypdf` für dauerhaft durchsuchbare PDFs
+
+## Installation & Abhängigkeitsprüfung
+
+Nur prüfen:
+
+```bash
+python3 rename_by_dokumentnummer.py --check-deps
+```
+
+Pflichtabhängigkeiten installieren (via erkanntem Paketmanager):
+
+```bash
+python3 rename_by_dokumentnummer.py --install-deps
+```
+
+Pflicht + optionale OCR-Abhängigkeiten installieren:
+
+```bash
+python3 rename_by_dokumentnummer.py --install-deps --with-optional-deps
+```
+
+Hinweise:
+- Unterstützte Paketmanager: `apt-get`, `dnf`, `pacman`, `zypper`, `brew`.
+- Je nach System sind `sudo`-Rechte erforderlich.
 
 ## Nutzung
 
