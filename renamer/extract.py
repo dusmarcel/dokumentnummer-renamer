@@ -114,16 +114,27 @@ def extract_document_refs(text: str) -> list[DocumentRef]:
     az_hint_re = re.compile(r"\d{1,3}\s*[A-Za-z]{0,4}\s*\d{1,5}\s*[/.-]\s*\d{2}|\d{1,3}\.\d{3,5}")
 
     for idx, line in enumerate(lines):
+        next_line = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
+        line_for_match = line
         if "Dokument Nr." not in line:
+            if "(Dokument" in line and re.search(r"^\s*Nr\.\s*\d{4,5}\s*[a-z]?\)", next_line, re.IGNORECASE):
+                line_for_match = f"{line} {next_line}"
+            else:
+                continue
+
+        if "Dokument Nr." not in line_for_match:
             continue
 
-        match = doc_re.search(line)
+        match = doc_re.search(line_for_match)
+        if not match and re.search(r"\(Dokument Nr\.\s*\d{4,5}\s*$", line.strip(), re.IGNORECASE):
+            line_for_match = f"{line} {next_line}"
+            match = doc_re.search(line_for_match)
         if not match:
             continue
 
         doc_number = match.group(1)
         doc_suffix = (match.group(2) or "").lower()
-        before = line[: match.start()].strip()
+        before = line_for_match[: match.start()].strip()
         prev1 = lines[idx - 1].strip() if idx - 1 >= 0 else ""
         prev2 = lines[idx - 2].strip() if idx - 2 >= 0 else ""
         candidate_chunks = [
@@ -142,6 +153,16 @@ def extract_document_refs(text: str) -> list[DocumentRef]:
             prev2 and (court_hint_re.search(prev2) or DATE_RE.search(prev2) or az_hint_re.search(prev2))
         )
         before_looks_like_title = len(split_filename_words(before)) >= 4 and not before_has_structured_citation
+        before_is_short_tail = 0 < len(split_filename_words(before)) <= 3
+        before_looks_like_wrapped_tail = (
+            before
+            and DATE_RE.search(before)
+            and not court_hint_re.search(before)
+            and prev1
+            and prev2
+            and not prev1_has_structured_citation
+            and not prev2_has_structured_citation
+        )
 
         def quality_score(chunk: str) -> int:
             chunk = strip_document_ref_markers(chunk)
@@ -159,7 +180,11 @@ def extract_document_refs(text: str) -> list[DocumentRef]:
             score += min(len(chunk), 120) // 40
             return score
 
-        if not before and prev1 and prev2.rstrip().endswith(("und", "-")):
+        if before_looks_like_wrapped_tail:
+            citation = f"{prev2} {prev1} {before}".strip()
+        elif before_is_short_tail and prev1 and prev2 and not prev1_has_structured_citation and not prev2_has_structured_citation:
+            citation = f"{prev2} {prev1} {before}".strip()
+        elif not before and prev1 and prev2.rstrip().endswith(("und", "-")):
             citation = f"{prev2} {prev1}".strip()
         elif before_looks_like_title and prev1.rstrip().endswith(("und", "-")):
             citation = f"{prev1} {before}".strip()

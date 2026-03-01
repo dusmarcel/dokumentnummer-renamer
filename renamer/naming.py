@@ -6,6 +6,10 @@ from .models import DocumentRef
 from .text_utils import format_filename_word, split_filename_words
 
 
+def collapse_duplicate_doc_prefix(filename: str) -> str:
+    return re.sub(r"^(\d{4,5})_(\1[a-z]?_)", r"\2", filename, flags=re.IGNORECASE)
+
+
 def build_target_filename(ref: DocumentRef, src: Path, separator: str) -> str:
     parts: list[str] = [ref.doc_id]
 
@@ -42,4 +46,5 @@ def build_target_filename(ref: DocumentRef, src: Path, separator: str) -> str:
 
     filename = separator.join(parts)
     filename = re.sub(rf"{re.escape(separator)}+", separator, filename).strip(separator)
+    filename = collapse_duplicate_doc_prefix(filename)
     return f"{filename}{src.suffix.lower()}"

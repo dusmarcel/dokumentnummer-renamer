@@ -1,10 +1,20 @@
 import shutil
 import subprocess
 import tempfile
+import re
 from pathlib import Path
 
 from .models import CandidateDoc
 from .text_utils import normalize_text, tokenize
+
+
+HEADER_SIGNAL_RE = re.compile(
+    r"\b(vg|ovg|vgh|bverwg|bverfg|eugh|verwaltungsgericht|beschluss|urteil)\b",
+    re.IGNORECASE,
+)
+AKTENZEICHEN_SIGNAL_RE = re.compile(
+    r"\b[A-Z]?\s*\d{1,3}\s*[A-Za-z]{0,4}\s*\d{1,5}\s*[/.-]\s*\d{2,4}\b"
+)
 
 
 def run_pdftotext(pdf_path: Path) -> str:
@@ -55,6 +65,34 @@ def run_ocr_text(pdf_path: Path, ocr_pages: int, ocr_dpi: int, ocr_lang: str) ->
                 continue
             chunks.append(proc.stdout.decode("utf-8", errors="ignore"))
         return "\n".join(chunks)
+
+
+def text_has_structured_header(text: str) -> bool:
+    head = text[:1200]
+    return bool(HEADER_SIGNAL_RE.search(head) and AKTENZEICHEN_SIGNAL_RE.search(head))
+
+
+def maybe_enrich_with_header_ocr(
+    pdf_path: Path,
+    text: str,
+    ocr_dpi: int,
+    ocr_lang: str,
+) -> str:
+    if text_has_structured_header(text):
+        return text
+    if shutil.which("tesseract") is None or shutil.which("pdftoppm") is None:
+        return text
+
+    try:
+        ocr_text = run_ocr_text(pdf_path, ocr_pages=1, ocr_dpi=ocr_dpi, ocr_lang=ocr_lang)
+    except RuntimeError:
+        return text
+
+    if not text_has_structured_header(ocr_text):
+        return text
+    if normalize_text(ocr_text) in normalize_text(text):
+        return text
+    return f"{ocr_text}\n{text}".strip()
 
 
 def build_searchable_pdf(
@@ -123,6 +161,13 @@ def build_candidate_index(
                 text = run_pdftotext(content_source)
             except RuntimeError:
                 text = ""
+
+            text = maybe_enrich_with_header_ocr(
+                content_source,
+                text,
+                ocr_dpi=ocr_dpi,
+                ocr_lang=ocr_lang,
+            )
 
             if use_ocr and len(normalize_text(text)) < 80:
                 try:
