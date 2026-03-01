@@ -3,6 +3,21 @@ import re
 from .models import DocumentRef
 from .text_utils import format_filename_word, normalize_text, split_filename_words, tokenize
 
+DOCUMENT_REF_RE = re.compile(r"\(Dokument Nr\.\s*\d{4,5}\s*[a-z]?\)", re.IGNORECASE)
+DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})\b")
+EU_CASE_RE = re.compile(r"\b(?:Rs\.?\s*)?[A-Z][-\u2010-\u2015]\s*\d{1,4}\s*/\s*\d{2,4}(?:\s*[A-Z])?\b")
+ADMIN_REF_RE = re.compile(r"\b[A-Za-z]{1,4}\d{0,3}\.\d{1,6}\s*/\s*\d{1,4}(?:#\d+)?\b")
+YEAR_SLASH_RE = re.compile(r"\b20\d{2}\s*/\s*\d{3,5}\b")
+GERMAN_AZ_SLASH_RE = re.compile(
+    r"\b(?:[A-Za-z]{1,4}\s+)?\d{1,3}\s*[A-Za-z]{1,6}\s*\d{1,5}\s*/\s*\d{2}(?:\.?[A-Za-z]+)?\b"
+)
+GERMAN_AZ_DOT_RE = re.compile(
+    r"\b(?:[A-Za-z]{1,4}\s+)?\d{1,3}\s*[A-Za-z]{1,6}\s*\d{1,5}\.\d{2}(?:\.?[A-Za-z]+)?\b"
+)
+GERMAN_AZ_DASH_RE = re.compile(
+    r"\b(?:[A-Za-z]{1,4}\s+)?\d{1,3}\s*[A-Za-z]{1,6}\s*\d{1,5}\s*-\s*\d{2}(?:\.?[A-Za-z]+)?\b"
+)
+
 GENERIC_COURT_TOKENS = {
     "vg",
     "ovg",
@@ -51,6 +66,46 @@ COMMON_TITLE_TOKENS = {
 }
 
 
+def strip_document_ref_markers(text: str) -> str:
+    return DOCUMENT_REF_RE.sub(" ", text)
+
+
+def _extract_best_az_match(citation: str) -> str:
+    patterns = [
+        EU_CASE_RE,
+        ADMIN_REF_RE,
+        YEAR_SLASH_RE,
+        GERMAN_AZ_SLASH_RE,
+        GERMAN_AZ_DOT_RE,
+        GERMAN_AZ_DASH_RE,
+    ]
+    for pattern in patterns:
+        matches = list(pattern.finditer(citation))
+        if matches:
+            return matches[-1].group(0)
+
+    dot_pat = re.compile(r"\b\d{1,3}\.\d{3,5}\b")
+    plain_num_pat = re.compile(r"\b\d{5,}\b")
+    dot_matches = list(dot_pat.finditer(citation))
+    usable = []
+    for match in dot_matches:
+        left_s, right_s = match.group(0).split(".")
+        left = int(left_s)
+        right = int(right_s)
+        if 1900 <= right <= 2100:
+            continue
+        if left <= 31 and right <= 12:
+            continue
+        usable.append(match)
+    if usable:
+        return usable[-1].group(0)
+
+    plain_num_matches = list(plain_num_pat.finditer(citation))
+    if plain_num_matches:
+        return plain_num_matches[-1].group(0)
+    return ""
+
+
 def extract_document_refs(text: str) -> list[DocumentRef]:
     lines = text.splitlines()
     refs: list[DocumentRef] = []
@@ -77,18 +132,42 @@ def extract_document_refs(text: str) -> list[DocumentRef]:
             f"{prev2} {prev1} {before}".strip(),
         ]
 
+        before_has_structured_citation = bool(
+            before and (court_hint_re.search(before) or DATE_RE.search(before) or az_hint_re.search(before))
+        )
+        prev1_has_structured_citation = bool(
+            prev1 and (court_hint_re.search(prev1) or DATE_RE.search(prev1) or az_hint_re.search(prev1))
+        )
+        prev2_has_structured_citation = bool(
+            prev2 and (court_hint_re.search(prev2) or DATE_RE.search(prev2) or az_hint_re.search(prev2))
+        )
+        before_looks_like_title = len(split_filename_words(before)) >= 4 and not before_has_structured_citation
+
         def quality_score(chunk: str) -> int:
+            chunk = strip_document_ref_markers(chunk)
             score = 0
             if court_hint_re.search(chunk):
                 score += 3
-            if re.search(r"\d{2}\.\d{2}\.\d{4}", chunk):
+            if DATE_RE.search(chunk):
                 score += 2
             if az_hint_re.search(chunk):
                 score += 2
+            if chunk == before and len(split_filename_words(chunk)) >= 4:
+                score += 6
+            if chunk != before and prev1.rstrip().endswith(("-", "und", "des", "der", "die", "vom", "zur", "zum", "im", "am")):
+                score += 7
             score += min(len(chunk), 120) // 40
             return score
 
-        citation = max(candidate_chunks, key=quality_score)
+        if not before and prev1 and prev2.rstrip().endswith(("und", "-")):
+            citation = f"{prev2} {prev1}".strip()
+        elif before_looks_like_title and prev1.rstrip().endswith(("und", "-")):
+            citation = f"{prev1} {before}".strip()
+        elif before_looks_like_title and (prev1_has_structured_citation or prev2_has_structured_citation):
+            citation = before
+        else:
+            citation = max(candidate_chunks, key=quality_score)
+        citation = strip_document_ref_markers(citation)
         citation = re.sub(r"\s+", " ", citation).strip(" ,;-")
         refs.append(
             DocumentRef(
@@ -103,46 +182,9 @@ def extract_document_refs(text: str) -> list[DocumentRef]:
 
 
 def extract_az_tokens(citation: str) -> list[str]:
-    slash_pat = r"\b(?:[A-Za-z]{1,4}\s+)?\d{1,3}\s*[A-Za-z]{1,4}\s*\d{1,5}\s*/\s*\d{2}(?:\.[A-Za-z])?\b"
-    dash_pat = r"\b(?:[A-Za-z]{1,4}\s+)?\d{1,3}\s*[A-Za-z]{1,4}\s*\d{1,5}\s*-\s*\d{2}(?:\.[A-Za-z])?\b"
-    dot_pat = r"\b\d{1,3}\.\d{3,5}\b"
-    plain_num_pat = r"\b\d{5,}\b"
-
-    slash_matches = list(re.finditer(slash_pat, citation))
-    if slash_matches:
-        az_raw = slash_matches[-1].group(0)
-        return [tok for tok in tokenize(az_raw) if len(tok) >= 1]
-
-    dash_matches = list(re.finditer(dash_pat, citation))
-    if dash_matches:
-        az_raw = dash_matches[-1].group(0)
-        return [tok for tok in tokenize(az_raw) if len(tok) >= 1]
-
-    dot_matches = list(re.finditer(dot_pat, citation))
-    if not dot_matches:
-        plain_num_matches = list(re.finditer(plain_num_pat, citation))
-        if not plain_num_matches:
-            return []
-        az_raw = plain_num_matches[-1].group(0)
-        return [tok for tok in tokenize(az_raw) if len(tok) >= 1]
-
-    usable = []
-    for match in dot_matches:
-        left_s, right_s = match.group(0).split(".")
-        left = int(left_s)
-        right = int(right_s)
-        if 1900 <= right <= 2100:
-            continue
-        if left <= 31 and right <= 12:
-            continue
-        usable.append(match)
-    if not usable:
-        plain_num_matches = list(re.finditer(plain_num_pat, citation))
-        if not plain_num_matches:
-            return []
-        az_raw = plain_num_matches[-1].group(0)
-        return [tok for tok in tokenize(az_raw) if len(tok) >= 1]
-    az_raw = usable[-1].group(0)
+    az_raw = _extract_best_az_match(citation)
+    if not az_raw:
+        return []
     return [tok for tok in tokenize(az_raw) if len(tok) >= 1]
 
 
@@ -153,7 +195,7 @@ def extract_court_tokens(citation: str) -> list[str]:
 
 
 def extract_date_variants(citation: str) -> list[str]:
-    match = re.search(r"\b(\d{2})\.(\d{2})\.(\d{4})\b", citation)
+    match = DATE_RE.search(citation)
     if not match:
         return []
     day, month, year = match.group(1), match.group(2), match.group(3)
@@ -161,17 +203,7 @@ def extract_date_variants(citation: str) -> list[str]:
 
 
 def extract_az_raw(citation: str) -> str:
-    patterns = [
-        r"\b(?:[A-Za-z]{1,4}\s+)?\d{1,3}\s*[A-Za-z]{1,4}\s*\d{1,5}\s*/\s*\d{2}(?:\.[A-Za-z])?\b",
-        r"\b(?:[A-Za-z]{1,4}\s+)?\d{1,3}\s*[A-Za-z]{1,4}\s*\d{1,5}\s*-\s*\d{2}(?:\.[A-Za-z])?\b",
-        r"\b\d{1,3}\.\d{3,5}\b",
-        r"\b\d{5,}\b",
-    ]
-    for pattern in patterns:
-        matches = list(re.finditer(pattern, citation))
-        if matches:
-            return matches[-1].group(0)
-    return ""
+    return _extract_best_az_match(citation)
 
 
 def extract_az_phrase(citation: str) -> str:

@@ -99,6 +99,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Installiert bei --install-deps auch optionale OCR-Abhängigkeiten.",
     )
+    parser.add_argument(
+        "--mark-unused",
+        action="store_true",
+        help="Markiert nicht zugeordnete PDFs mit einem Praefix statt sie nur zu melden.",
+    )
+    parser.add_argument(
+        "--unused-prefix",
+        default="UNUSED",
+        help="Praefix fuer --mark-unused (Standard: UNUSED).",
+    )
     return parser
 
 
@@ -165,12 +175,21 @@ def main() -> int:
         searchable_force=args.searchable_force,
     )
     match_results = [match_reference_with_index(ref, index) for ref in refs]
-    errors = rename_files(match_results, args.separator, args.apply)
+    summary = rename_files(
+        match_results,
+        files,
+        args.separator,
+        args.apply,
+        mark_unused=args.mark_unused,
+        unused_prefix=args.unused_prefix,
+    )
 
     print("---")
     print(f"Verarbeitet: {len(match_results)}")
-    print(f"Fehler/Warnungen: {errors}")
-    return 0 if errors == 0 else 3
+    print(f"Zugeordnet: {len(summary.assigned_paths)}")
+    print(f"Unbenutzt: {len(summary.unused_paths)}")
+    print(f"Fehler/Warnungen: {summary.errors}")
+    return 0 if summary.errors == 0 else 3
 
 
 if __name__ == "__main__":

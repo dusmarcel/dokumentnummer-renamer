@@ -35,3 +35,10 @@ class DependencyStatus:
     required: bool
     found_path: str | None
     note: str
+
+
+@dataclass
+class RenameSummary:
+    errors: int
+    assigned_paths: set[Path]
+    unused_paths: list[Path]
